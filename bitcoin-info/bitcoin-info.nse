@@ -18,6 +18,19 @@ require 'shortport'
 require 'stdnse'
 require 'bit'
 
+-- magic values that determine which network messages are for
+MAGIC = {
+  MainNet = "D9B4BEF9",
+  TestNet = "DAB5BFFA",
+}
+
+-- commands are strings null padded to 12 characters
+COMMAND = {
+	Version = "76657273696f6e0000000000", -- "version"
+}
+
+VERSIONPACKET = bin.pack("H", "f9beb4d976657273696f6e0000000000550000002c7e000001000000000000000eef034e00000000010000000000000000000000000000000000ffff62f7061f208d010000000000000000000000000000000000ffffc0a8006a208d7a7371ba6a0d0ef9007a7d0000")
+
 portrule = shortport.portnumber(8333, "tcp")
 
 action = function(host, port)
@@ -39,16 +52,48 @@ action = function(host, port)
 
   try( socket:connect(host, port) )
 
-  -- get our data
+  -- construct a version request packet
+  packet = bin.pack("H", MAGIC.MainNet)
+  packet = packet .. bin.pack("H", COMMAND.Version)
+  packet = packet .. bin.pack("H", "00000000")
+  
+  -- version packet is 85 length payload
+  --packer = packet .. bin.pack( =
+  
+  --packet = VERSIONPACKET
+  
+  -- send it
+  socket:send(packet)
+  
+  -- recieve a version reply packet
+  local status
+  local pos
+  local magic = ""
+  local command
+  local length
+  local checksum
+  -- header
+  status, header = socket:receive_bytes(4)
+
+  pos, magic = bin.unpack("<I", header)
+  --pos, command = bin.unpack("<A12", header, pos)
+  --pos, length = bin.unpack("<I", header, pos)
+  --pos, checksum = bin.unpack("<H4", header, pos)
+stdnse.print_debug(0, "magic: %X", magic)  
+  -- process it
+  
+  
+  -- output it
   
   -- output the server flags nicely
-  table.insert(result, string.format("| Server Flags: 0x%04x", response.flags.raw))
-  table.insert(result, string.format("|   Super Client: %s", response.flags.SuperClient and "Yes" or "No"))
-  table.insert(result, string.format("|_  Copy File: %s", response.flags.CopyFile and "Yes" or "No")) 
+  --able.insert(result, string.format("| Server Flags: 0x%04x", response.flags.raw))
+  --table.insert(result, string.format("|   Super Client: %s", response.flags.SuperClient and "Yes" or "No"))
+  --table.insert(result, string.format("|_  Copy File: %s", response.flags.CopyFile and "Yes" or "No")) 
 
   -- other info
-  table.insert(result, string.format("Server Name: %s", response.server_name))
-  table.insert(result, string.format("Machine Type: %s", response.machine_type))
+  --table.insert(result, string.format("Server Name: %s", response.server_name))
+  --table.insert(result, string.format("Machine Type: %s", response.machine_type))
   
+  table.insert(result, string.format("result"))
   return stdnse.format_output(true, result)
 end
