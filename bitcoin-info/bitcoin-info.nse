@@ -17,6 +17,9 @@ categories = {"discovery", "safe"}
 require 'shortport'
 require 'stdnse'
 require 'bit'
+require 'openssl'
+
+portrule = shortport.portnumber(8333, "tcp")
 
 -- magic values that determine which network messages are for
 MAGIC = {
@@ -24,14 +27,135 @@ MAGIC = {
   TestNet = "DAB5BFFA",
 }
 
--- commands are strings null padded to 12 characters
+-- commands
 COMMAND = {
-	Version = "76657273696f6e0000000000", -- "version"
+	Version = "version", 
+	VerACK  = "verack",
+	GetAddr = "getaddr"
 }
 
-VERSIONPACKET = bin.pack("H", "f9beb4d976657273696f6e0000000000550000002c7e000001000000000000000eef034e00000000010000000000000000000000000000000000ffff62f7061f208d010000000000000000000000000000000000ffffc0a8006a208d7a7371ba6a0d0ef9007a7d0000")
+-- versions
+VERSION = {
+	Default = 31415
+}
 
-portrule = shortport.portnumber(8333, "tcp")
+-- services
+SERVICES = {
+	Default = 1 -- NODE_NETWORK only
+}
+
+local function create_bitcoin_network_address(ip, port)
+	local IPV4_MAPPED_IPV6_HEADER = "00000000000000000000FFFF"
+
+	addr = bin.pack("<L", SERVICES.Default)
+	addr = addr .. bin.pack("H", IPV4_MAPPED_IPV6_HEADER)
+	addr = addr .. bin.pack("I", ip)
+	addr = addr .. bin.pack("S", port)
+	return addr
+end
+
+local function decode_bitcoin_packet (packet)
+	local command
+	local payload
+	local pos
+	local length
+
+	_, command = bin.unpack(packet, "<A12", 4)
+	_, length = bin.unpack(packet, "<I", 16)
+
+	-- chop off any nulls at the end
+	while string.byte(command,string.len(command)) == 0 do
+		command = string.sub(command, 0, -1)
+	end
+
+	-- parse out payload
+	payload = ""
+	pos = 24
+	repeat
+		pos, temp = bin.unpack("C", pos)
+		payload = payload .. temp
+	until (pos - 24) == length
+
+	return command, payload
+end
+
+local function decode_version_payload(payload)
+	local version
+	local services
+	local timestamp
+	local addr_me
+	local addr_you
+	local nonce
+	local sub_version_num
+	local start_height
+
+	pos, version = bin.unpack("<I", payload, 0)
+	pos, services = bin.unpack("<L", payload, pos)
+	pos, timestamp = bin.unpack("<L", payload, pos)
+	pos, addr_me = bin.unpack("A26", payload, pos)
+	if version >= 106 then
+		pos, addr_you = bin.unpack("A26", payload, pos)
+		pos, nonce = bin.unpack("<L", payload, pos)
+		pos, sub_version_num = bin.unpack("p", payload, pos)
+		if version >= 209 then
+			pos, start_height = bin.unpack("<I", payload, pos)
+		end
+	end
+
+	return 
+end
+
+local function create_bitcoin_packet (command, payload)
+	local header
+	local SHA256 = "sha256"
+
+	-- pad command with nulls to length 12
+	-- in lua, nulls don't terminate strings
+	repeat
+		command = commmand .. string.char(00)
+	until string.len(command) == 12
+
+	-- header starts out with a 4 byte magic value that tells bitcoin to use the main network (as opposed to the test network)
+	header = bin.pack("<H", MAGIC.NetMain)
+
+	-- next we have the command itself
+	header = header .. bin.pack("<A", command)
+
+	-- and the length of the payload
+	header = header .. bin.pack("<I", string.len(payload))
+
+	-- TODO: add graceful failing if openssl isn't available as per http://nmap.org/nsedoc/lib/openssl.html
+	-- and the checksum of the payload
+	-- this is first 4 bytes of sha256(sha256(payload))
+	header = header .. bin.pack("<I", openssl.digest(SHA256, openssl.digest(SHA256, payload)))
+	
+	-- header is done, return it together with the payload, which makes up a single bitcoin packet
+	return header .. payload
+end
+
+local function create_version_payload(addr_you)
+	local payload
+	local timestamp = os.time()
+	local addr_me
+	local nonce
+	local start_height
+
+	-- TODO: format IP addresses properly
+	-- TODO: generate nonce
+	-- TODO: set start_height
+
+	payload = bin.pack("<I", VERSION.Default)
+	payload = payload .. bin.pack("<L", SERVICES.Default)
+	payload = payload .. bin.pack("<L", timestamp)
+	payload = payload .. bin.pack("<S", addr_me)
+	payload = payload .. bin.pack("<S", addr_you)
+	payload = payload .. bin.pack("<L", nonce)
+	payload = payload .. bin.pack("<I", start_height)
+
+	return payload
+end
+
+
 
 action = function(host, port)
 
@@ -52,15 +176,7 @@ action = function(host, port)
 
   try( socket:connect(host, port) )
 
-  -- construct a version request packet
-  packet = bin.pack("H", MAGIC.MainNet)
-  packet = packet .. bin.pack("H", COMMAND.Version)
-  packet = packet .. bin.pack("H", "00000000")
-  
-  -- version packet is 85 length payload
-  --packer = packet .. bin.pack( =
-  
-  --packet = VERSIONPACKET
+ 
   
   -- send it
   socket:send(packet)
