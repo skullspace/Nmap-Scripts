@@ -44,13 +44,25 @@ SERVICES = {
 	Default = 1 -- NODE_NETWORK only
 }
 
-local function create_bitcoin_network_address(ip, port)
+IP = {
+  LocalHost = 0x7F000001
+}
+
+local function create_bitcoin_network_address(host, port)
 	local IPV4_MAPPED_IPV6_HEADER = "00000000000000000000FFFF"
 
 	addr = bin.pack("<L", SERVICES.Default)
 	addr = addr .. bin.pack("H", IPV4_MAPPED_IPV6_HEADER)
-	addr = addr .. bin.pack("I", ip)
-	addr = addr .. bin.pack("S", port)
+
+-- it seems when host.ip = "127.0.0.1", host.bin_ip isn't populated
+-- TODO: file this as a bug
+-- TODO: this doesn't work x.x
+  if host.ip == "127.0.0.1" then
+    host.bin_ip = 0x7F000001 -- 127.0.0.1
+  end
+stdnse.print_debug(table_print(host))
+	addr = addr .. bin.pack("I", host.bin_ip)
+	addr = addr .. bin.pack("S", port.number)
 	return addr
 end
 
@@ -163,7 +175,14 @@ action = function(host, port)
   local status
   local result = {}
   local temp
+  local packet
+  local payload
+  local address
   
+  stdnse.print_debug(table_print(host))
+  end
+
+local function lol (lol)
   -- set a reasonable timeout value
   socket:set_timeout(5000)
   
@@ -175,11 +194,13 @@ action = function(host, port)
   local try = nmap.new_try(catch)
 
   try( socket:connect(host, port) )
-
- 
+  
+  address = create_bitcoin_network_address(host, port)
+  payload = create_version_payload(address) 
+  packet = create_bitcoin_packet(COMMAND.Version, payload)
   
   -- send it
-  socket:send(packet)
+  try( socket:send(packet) )
   
   -- recieve a version reply packet
   local status
@@ -212,4 +233,30 @@ stdnse.print_debug(0, "magic: %X", magic)
   
   table.insert(result, string.format("result"))
   return stdnse.format_output(true, result)
+end
+
+function table_print (tt, indent, done)
+  done = done or {}
+  indent = indent or 0
+  if type(tt) == "table" then
+    local sb = {}
+    for key, value in pairs (tt) do
+      table.insert(sb, string.rep (" ", indent)) -- indent it
+      if type (value) == "table" and not done [value] then
+        done [value] = true
+        table.insert(sb, "{\n");
+        table.insert(sb, table_print (value, indent + 2, done))
+        table.insert(sb, string.rep (" ", indent)) -- indent it
+        table.insert(sb, "}\n");
+      elseif "number" == type(key) then
+        table.insert(sb, string.format("\"%s\"\n", tostring(value)))
+      else
+        table.insert(sb, string.format(
+            "%s = \"%s\"\n", tostring (key), tostring(value)))
+       end
+    end
+    return table.concat(sb)
+  else
+    return tt .. "\n"
+  end
 end
